@@ -4,6 +4,7 @@ using System.Dynamic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -545,7 +546,8 @@ namespace ArmKubeOper.Services
         async Task<GenericResource> CreateResourceAsync(ResourceGroup group, AzureResource entity, CancellationToken cancellationToken)
         {
             logger.Information("Creating Azure resource: {ResourceGroupId} {ResourceProvider} {ResourceType} {Name}", group.Id, entity.Spec.ResourceProvider, entity.Spec.ResourceType, entity.Spec.Name);
-            var ops = await arm.GetGenericResources().CreateOrUpdateAsync(true, new ResourceIdentifier($"{group.Id}/providers/{entity.Spec.ResourceProvider}/{entity.Spec.ResourceType}/{entity.Spec.Name}"), GetUpdateData(entity), cancellationToken);
+            var obj = await TemplateToResourceDataAsync(entity, cancellationToken);
+            var ops = await arm.GetGenericResources().CreateOrUpdateAsync(true, new ResourceIdentifier($"{group.Id}/providers/{entity.Spec.ResourceProvider}/{entity.Spec.ResourceType}/{entity.Spec.Name}"), obj, cancellationToken);
             return await UpdateResourceAsync(ops.Value, entity, cancellationToken);
         }
 
@@ -562,7 +564,8 @@ namespace ArmKubeOper.Services
                 throw new AzureServiceException("Cannot update Azure resource {Id}. Existing resource does not contain tag indicating ownership by this entity.");
 
             logger.Information("Updating Azure resource: {Id}", resource.Id);
-            var ops = await resource.UpdateAsync(true, GetUpdateData(entity), cancellationToken);
+            var obj = await TemplateToResourceDataAsync(entity, cancellationToken);
+            var ops = await resource.UpdateAsync(true, obj, cancellationToken);
             return ops.Value;
         }
 
@@ -570,11 +573,12 @@ namespace ArmKubeOper.Services
         /// Converts a specification to resource data.
         /// </summary>
         /// <param name="entity"></param>
+        /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        GenericResourceData GetUpdateData(AzureResource entity)
+        async ValueTask<GenericResourceData> TemplateToResourceDataAsync(AzureResource entity, CancellationToken cancellationToken)
         {
             // hacky method of taking the K8s object data and applying a template and returning a new object, converted to a GenericResourceData
-            var t = ApplyTemplate(((JsonElement)entity.Spec.Template).Deserialize<JsonNode>(), new JsonObject());
+            var t = await VisitTemplateAsync(((JsonElement)entity.Spec.Template).Deserialize<JsonNode>(), entity.Namespace(), cancellationToken);
             var d = JsonDocument.Parse(t.ToJsonString());
             var l = typeof(GenericResourceData).GetMethod("DeserializeGenericResourceData", BindingFlags.NonPublic | BindingFlags.Static);
             var r = (GenericResourceData)l.Invoke(null, new object[] { d.RootElement });
@@ -592,66 +596,58 @@ namespace ArmKubeOper.Services
         /// <summary>
         /// Applies the data to the template to return a final object.
         /// </summary>
-        /// <param name="template"></param>
-        /// <param name="data"></param>
+        /// <param name="node"></param>
+        /// <param name="defaultNamespace"></param>
+        /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        JsonNode ApplyTemplate(JsonNode template, JsonNode data)
+        async ValueTask<JsonNode> VisitTemplateAsync(JsonNode node, string defaultNamespace, CancellationToken cancellationToken) => node switch
         {
-            return template switch
+            JsonValue v => JsonNode.Parse(v.ToJsonString()),
+            JsonArray a => new JsonArray(await a.ToAsyncEnumerable().SelectAwaitWithCancellation((i, c) => VisitTemplateAsync(i,  defaultNamespace, c)).ToArrayAsync(cancellationToken)),
+            JsonObject o => await VisitTemplateAsync(o,  defaultNamespace, cancellationToken),
+            _ => throw new NotImplementedException(),
+        };
+
+        /// <summary>
+        /// Applies the data to the template to return a final object.
+        /// </summary>
+        /// <param name="node"></param>
+        /// <param name="defaultNamespace"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        async ValueTask<JsonNode> VisitTemplateAsync(JsonObject node,  string defaultNamespace, CancellationToken cancellationToken)
+        {
+            // a template value is denoted by the special map with a single property
+            if (node.Count == 1 && node.TryGetPropertyValue("$secretRef", out var s))
             {
-                JsonValue v => ApplyTemplate(v, data),
-                JsonObject o => ApplyTemplate(o, data),
-                JsonArray a => ApplyTemplate(a, data),
-                _ => throw new NotImplementedException(),
-            };
+                var t = s.ToJsonString();
+                var secretRef = KubernetesJsonAdapter.Deserialize<AzureTemplateSecretRef>(t);
+                return await VisitTemplateSecretRefAsync(secretRef, defaultNamespace, cancellationToken);
+            }
+
+            return new JsonObject(await node.ToAsyncEnumerable().SelectAwaitWithCancellation(async (kvp, c) => new KeyValuePair<string, JsonNode>(kvp.Key, await VisitTemplateAsync(kvp.Value,  defaultNamespace, c))).ToListAsync(cancellationToken));
         }
 
         /// <summary>
-        /// Applies the data to the template to return a final object.
+        /// Applies the given templated node to the data and returns the resulting value.
         /// </summary>
-        /// <param name="template"></param>
-        /// <param name="data"></param>
+        /// <param name="secretRef"></param>
+        /// <param name="defaultNamespace"></param>
         /// <returns></returns>
-        JsonValue ApplyTemplate(JsonValue template, JsonNode data)
+        /// <exception cref="NotImplementedException"></exception>
+        async ValueTask<JsonNode> VisitTemplateSecretRefAsync(AzureTemplateSecretRef secretRef, string defaultNamespace, CancellationToken cancellationToken)
         {
-            return template.GetValueKind() switch
-            {
-                JsonValueKind.String => ApplyTemplate(template.GetValue<string>(), data),
-                _ => template,
-            };
-        }
+            var secret = await k8s.Get<V1Secret>(secretRef.Name, secretRef.Namespace ?? defaultNamespace);
+            if (secret == null)
+                throw new AzureServiceException("Could not find secret in $secretRef.");
 
-        /// <summary>
-        /// Applies the data to the template to return a final object.
-        /// </summary>
-        /// <param name="template"></param>
-        /// <param name="data"></param>
-        /// <returns></returns>
-        JsonValue ApplyTemplate(string template, JsonNode data)
-        {
-            return JsonValue.Create(Handlebars.Compile(template)(data));
-        }
+            if (secret.Data.TryGetValue(secretRef.Key, out var value) == false)
+                throw new AzureServiceException("Could not find secret key in $secretRef.");
 
-        /// <summary>
-        /// Applies the data to the template to return a final object.
-        /// </summary>
-        /// <param name="template"></param>
-        /// <param name="data"></param>
-        /// <returns></returns>
-        JsonObject ApplyTemplate(JsonObject template, JsonNode data)
-        {
-            return new JsonObject(template.Select(kvp => new KeyValuePair<string, JsonNode?>(kvp.Key, ApplyTemplate(kvp.Value, data))));
-        }
-
-        /// <summary>
-        /// Applies the data to the template to return a final object.
-        /// </summary>
-        /// <param name="template"></param>
-        /// <param name="data"></param>
-        /// <returns></returns>
-        JsonArray ApplyTemplate(JsonArray template, JsonNode data)
-        {
-            return new JsonArray(template.Select(i => ApplyTemplate(i, data)).ToArray());
+            if (secretRef.Encoding == "base64")
+                return JsonValue.Create(Convert.ToBase64String(value));
+            else
+                return JsonValue.Create(Encoding.UTF8.GetString(value));
         }
 
         /// <summary>
@@ -660,7 +656,7 @@ namespace ArmKubeOper.Services
         /// <param name="source"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        async Task<JsonNode> GetResourceObjectAsync(GenericResource source, CancellationToken cancellationToken)
+        ValueTask<JsonNode> GetResourceObjectAsync(GenericResource source, CancellationToken cancellationToken)
         {
             // sort of a hack to serialize the object
             var l = Type.GetType("Azure.Core.IUtf8JsonSerializable, Azure.ResourceManager").GetMethod("Write");
@@ -669,7 +665,7 @@ namespace ArmKubeOper.Services
             l.Invoke(source.Data, new object[] { w });
             w.Flush();
             m.Position = 0;
-            return JsonNode.Parse(m);
+            return new ValueTask<JsonNode>(JsonNode.Parse(m));
         }
 
         /// <summary>
@@ -927,6 +923,125 @@ namespace ArmKubeOper.Services
 
         #endregion
 
+        #region AzureResourceConfigMap
+
+        /// <summary>
+        /// Reconciles the state of an <see cref="AzureResourceConfigMap"/>.
+        /// </summary>
+        /// <param name="entity">sssss</param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public async Task<bool> ReconcileAsync(AzureResourceConfigMap entity, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // user specified a refresh interval, check that our next refresh time is not > now
+                if (entity.Spec.RefreshInterval != null)
+                {
+                    var ts = ArmKubeOper.Extensions.TimeSpanExtensions.ParseKubeString(entity.Spec.RefreshInterval);
+                    if (entity.Status.RefreshTime != null && entity.Status.RefreshTime + ts > DateTime.UtcNow)
+                        return true;
+                }
+
+                // resolve the specified resource
+                var resource = await ResolveAsync(entity.Spec.Resource, entity.Namespace(), cancellationToken);
+                if (resource == null)
+                    throw new AzureServiceException("Resource group could not be located.");
+
+                // get or create a new owned secret
+                var configMap = await k8s.Get<V1ConfigMap>(entity.Spec.Target.Name, entity.Spec.Target.Namespace ?? entity.Namespace());
+                if (configMap == null)
+                {
+                    configMap = new V1ConfigMap();
+                    configMap.EnsureMetadata().SetNamespace(entity.Spec.Target.Namespace ?? entity.Namespace());
+                    configMap.EnsureMetadata().Name = entity.Spec.Target.Name;
+                    configMap.AddOwnerReference(new V1OwnerReference() { ApiVersion = entity.ApiVersion, Kind = entity.Kind, Name = entity.Metadata.Name, Uid = entity.Metadata.Uid });
+                    configMap = await k8s.Create(configMap);
+                }
+
+                // we shouldn't be managing a secret we don't own
+                if (configMap.IsOwnedBy(entity) == false)
+                    throw new AzureServiceException("ConfigMap is not owned by this AzureResource.");
+
+                // an endpoint is specified, invoke the endpoint to obtain the data
+                JsonNode data = null;
+                if (entity.Spec.Endpoint != null)
+                    data = await GetResourceEndpointAsync(resource, entity.Spec.ApiVersion, entity.Spec.Endpoint, cancellationToken);
+                else
+                    // no endpoint, use resource data itself
+                    data = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(resource.Data));
+
+                // applies the template to the entity
+                ApplyTemplate(entity.Spec.Template, configMap, data);
+
+                // update the secret value and status
+                await k8s.Update(configMap);
+                entity.Status.ConfigMapNamespace = configMap.Namespace();
+                entity.Status.ConfigMapName = configMap.Name();
+                entity.Status.RefreshTime = DateTime.UtcNow;
+                entity.Status.State = "Success";
+                entity.Status.Error = null;
+                await k8s.UpdateStatus(entity);
+                await evt.PublishAsync(entity, "Success", "Resource configmap successfully updated.", EventType.Normal);
+                return true;
+            }
+            catch (RequestFailedException e)
+            {
+                entity.Status.State = "Faulted";
+                entity.Status.Error = e.ErrorCode;
+                await k8s.UpdateStatus(entity);
+                await evt.PublishAsync(entity, "Faulted", "Resource configmap operation faulted.", EventType.Normal);
+                throw;
+            }
+            catch (Exception e)
+            {
+                entity.Status.State = "Faulted";
+                entity.Status.Error = e.Message;
+                await k8s.UpdateStatus(entity);
+                await evt.PublishAsync(entity, "Faulted", "Resource configmap operation faulted.", EventType.Normal);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Applies the given template object to the entity.
+        /// </summary>
+        /// <param name="template"></param>
+        /// <param name="configMap"></param>
+        /// <param name="data"></param>
+        /// <exception cref="NotImplementedException"></exception>
+        void ApplyTemplate(AzureConfigMapTemplate template, V1ConfigMap configMap, JsonNode data)
+        {
+            // handlebars is happier with an ExpandoObject, and System.Text.Json can't seem to fully deserialize it
+            var dataObject = JToken.Parse(data.ToString()).ToObject<ExpandoObject>();
+
+            // apply any metadata
+            if (template.Metadata != null)
+            {
+                if (template.Metadata.Annotations != null)
+                    foreach (var kvp in template.Metadata.Annotations)
+                        configMap.SetAnnotation(kvp.Key, kvp.Value);
+                if (template.Metadata.Labels != null)
+                    foreach (var kvp in template.Metadata.Labels)
+                        configMap.SetLabel(kvp.Key, kvp.Value);
+            }
+
+            // apply any templates in data
+            if (template.Data != null)
+            {
+                configMap.Data ??= new Dictionary<string, string>();
+                foreach (var kvp in template.Data)
+                    configMap.Data[kvp.Key] = ExecuteTemplate(kvp.Value, dataObject);
+            }
+
+            // remove any keys that are not present in template
+            foreach (var kvp in configMap.Data.ToArray())
+                if (template.Data?.ContainsKey(kvp.Key) != true)
+                    configMap.Data.Remove(kvp.Key);
+        }
+
+        #endregion
+
         #region AzureResourceSecret
 
         /// <summary>
@@ -950,7 +1065,13 @@ namespace ArmKubeOper.Services
                 // resolve the specified resource
                 var resource = await ResolveAsync(entity.Spec.Resource, entity.Namespace(), cancellationToken);
                 if (resource == null)
-                    throw new AzureServiceException("Resource group could not be located.");
+                {
+                    entity.Status.State = "Faulted";
+                    entity.Status.Error = "Resource could not be located.";
+                    await k8s.UpdateStatus(entity);
+                    await evt.PublishAsync(entity, "Faulted", "Resource could not be located.", EventType.Normal);
+                    return false;
+                }    
 
                 // get or create a new owned secret
                 var secret = await k8s.Get<V1Secret>(entity.Spec.Target.Name, entity.Spec.Target.Namespace ?? entity.Namespace());
@@ -1008,35 +1129,6 @@ namespace ArmKubeOper.Services
         }
 
         /// <summary>
-        /// Gets the JSON data from an endpoint of a resource.
-        /// </summary>
-        /// <param name="resource"></param>
-        /// <param name="apiVersion"></param>
-        /// <param name="endpoint"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        /// <exception cref="AzureServiceException"></exception>
-        async Task<JsonNode> GetResourceEndpointAsync(GenericResource resource, string apiVersion, AzureResourceEndpoint endpoint, CancellationToken cancellationToken)
-        {
-            // body might come in as an unstructured object, convert to JSON node
-            JsonNode body = null;
-            if (endpoint.Body != null)
-                body = ((JsonElement)endpoint.Body).Deserialize<JsonNode>();
-
-            // generate and send a new message to retrieve the data
-            using var message = CreateEndpointMessage(resource, endpoint.Method, endpoint.Path, body, endpoint.Query, apiVersion);
-            await arm.Pipeline.SendAsync(message, cancellationToken);
-
-            // should be successful
-            if (message.Response.Status != 200)
-                throw new AzureServiceException("HTTP error retrieving secret.");
-
-            // parse results
-            using var value = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken);
-            return value.Deserialize<JsonNode>();
-        }
-
-        /// <summary>
         /// Applies the given template object to the entity.
         /// </summary>
         /// <param name="template"></param>
@@ -1085,6 +1177,8 @@ namespace ArmKubeOper.Services
                     secret.Data.Remove(kvp.Key);
         }
 
+        #endregion
+
         /// <summary>
         /// Executes a template.
         /// </summary>
@@ -1098,6 +1192,35 @@ namespace ArmKubeOper.Services
         }
 
         /// <summary>
+        /// Gets the JSON data from an endpoint of a resource.
+        /// </summary>
+        /// <param name="resource"></param>
+        /// <param name="apiVersion"></param>
+        /// <param name="endpoint"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        /// <exception cref="AzureServiceException"></exception>
+        async Task<JsonNode> GetResourceEndpointAsync(GenericResource resource, string apiVersion, AzureResourceEndpoint endpoint, CancellationToken cancellationToken)
+        {
+            // body might come in as an unstructured object, convert to JSON node
+            JsonNode body = null;
+            if (endpoint.Body != null)
+                body = ((JsonElement)endpoint.Body).Deserialize<JsonNode>();
+
+            // generate and send a new message to retrieve the data
+            using var message = CreateEndpointMessage(resource, endpoint.Method, endpoint.Path, body, endpoint.Query, apiVersion);
+            await arm.Pipeline.SendAsync(message, cancellationToken);
+
+            // should be successful
+            if (message.Response.Status != 200)
+                throw new AzureServiceException("HTTP error retrieving secret.");
+
+            // parse results
+            using var value = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken);
+            return value.Deserialize<JsonNode>();
+        }
+
+        /// <summary>
         /// Creates a request for executing a List* operation.
         /// </summary>
         /// <param name="resource"></param>
@@ -1107,7 +1230,7 @@ namespace ArmKubeOper.Services
         /// <param name="apiVersion"></param>
         /// <param name="query"></param>
         /// <returns></returns>
-        HttpMessage CreateEndpointMessage(GenericResource resource, string method, string path, JsonNode body, IDictionary<string, string> query, string apiVersion)
+        Azure.Core.HttpMessage CreateEndpointMessage(GenericResource resource, string method, string path, JsonNode body, IDictionary<string, string> query, string apiVersion)
         {
             var message = arm.Pipeline.CreateMessage();
             var request = message.Request;
@@ -1125,8 +1248,6 @@ namespace ArmKubeOper.Services
             request.Content = body != null ? RequestContent.Create(body.ToString()) : null;
             return message;
         }
-
-        #endregion
 
     }
 

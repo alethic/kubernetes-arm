@@ -185,6 +185,10 @@ spec:
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
                     type: object
+                  binaryData:
+                    description: Gets the data of the resulting configmap.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   data:
                     description: Gets the data of the resulting configmap.
                     type: object

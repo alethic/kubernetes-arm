@@ -8,11 +8,12 @@ rules:
   - coordination.k8s.io
   resources:
   - azuresubscriptions
-  - azuresubscriptionresources
   - azureresources
   - azureresourcegroups
-  - azureresourcesecrets
+  - azureresourceconfigmaps
   - azuretenantresources
+  - azureresourcesecrets
+  - azuresubscriptionresources
   - leases
   verbs:
   - '*'
@@ -43,14 +44,6 @@ rules:
 - apiGroups:
   - arm.azure.com
   resources:
-  - azuresubscriptionresources/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - arm.azure.com
-  resources:
   - azureresources/status
   verbs:
   - get
@@ -67,7 +60,7 @@ rules:
 - apiGroups:
   - arm.azure.com
   resources:
-  - azureresourcesecrets/status
+  - azureresourceconfigmaps/status
   verbs:
   - get
   - patch
@@ -76,6 +69,22 @@ rules:
   - arm.azure.com
   resources:
   - azuretenantresources/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azureresourcesecrets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azuresubscriptionresources/status
   verbs:
   - get
   - patch

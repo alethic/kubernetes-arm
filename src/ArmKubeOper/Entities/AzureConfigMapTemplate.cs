@@ -14,6 +14,11 @@ namespace ArmKubeOper.Entities
         /// <summary>
         /// Gets the data of the resulting configmap.
         /// </summary>
+        public Dictionary<string, string> BinaryData { get; set; }
+
+        /// <summary>
+        /// Gets the data of the resulting configmap.
+        /// </summary>
         public Dictionary<string, string> Data { get; set; }
 
     }

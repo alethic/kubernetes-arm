@@ -17,6 +17,10 @@ spec:
     location: eastus
     tags:
       test: valuess
+      secretData:
+        $secretRef:
+          name: value-secret
+          key: value
     kind: BlobStorage
     sku:
       name: Standard_LRS
