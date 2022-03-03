@@ -1,0 +1,80 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: azuresubscriptionresources.arm.azure.com
+spec:
+  group: arm.azure.com
+  names:
+    kind: AzureSubscriptionResource
+    listKind: AzureSubscriptionResourceList
+    plural: azuresubscriptionresources
+    singular: azuresubscriptionresource
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          status:
+            description: Status object for the entity.
+            properties:
+              properties:
+                description: Current definition of the resource.
+                properties: {}
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object
+          spec:
+            description: Specification of the kubernetes object.
+            properties:
+              subscription:
+                description: Method by which the Azure subscription is established.
+                properties:
+                  query:
+                    description: If specified, an existing Azure subscription will be located.
+                    properties:
+                      id:
+                        description: ID of the subscription to locate.
+                        type: string
+                      name:
+                        description: Name of the subscription to locate.
+                        type: string
+                    type: object
+                  ref:
+                    description: If specified, the Azure subscription will be provided by the located AzureSubscription resource.
+                    properties:
+                      namespace:
+                        description: Optional Kubernetes namespace of the AzureSubscription resource.
+                        type: string
+                      name:
+                        description: Name of the Kubernetes AzureSubscription resource.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              resourceProvider:
+                description: Name of the Resource Provider of the resource.
+                type: string
+              resourceType:
+                description: Type of the resource.
+                type: string
+              apiVersion:
+                description: API Version used to interact with the resource.
+                type: string
+              properties:
+                description: Definition of the resource.
+                properties: {}
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            required:
+            - subscription
+            - resourceProvider
+            - resourceType
+            - apiVersion
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

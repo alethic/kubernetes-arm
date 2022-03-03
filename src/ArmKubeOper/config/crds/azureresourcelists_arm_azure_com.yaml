@@ -1,0 +1,153 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: azureresourcelists.arm.azure.com
+spec:
+  group: arm.azure.com
+  names:
+    kind: AzureResourceList
+    listKind: AzureResourceListList
+    plural: azureresourcelists
+    singular: azureresourcelist
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          status:
+            description: Status object for the entity.
+            properties:
+              state:
+                description: State of the fetch operation.
+                type: string
+            type: object
+          spec:
+            description: Specification of the kubernetes object.
+            properties:
+              resource:
+                description: Reference of the resource to fetch data for.
+                properties:
+                  find:
+                    description: If specified, an existing Azure resource will be located.
+                    properties:
+                      resourceGroup:
+                        description: Method of locating the resource group for the resource.
+                        properties:
+                          find:
+                            description: If specified, an existing Azure resource group will be located.
+                            properties:
+                              subscription:
+                                description: ID of the Azure subscription to locate.
+                                properties:
+                                  find:
+                                    description: If specified, an existing Azure subscription will be located.
+                                    properties:
+                                      id:
+                                        description: ID of the subscription to locate.
+                                        type: string
+                                      name:
+                                        description: Name of the subscription to locate.
+                                        type: string
+                                    type: object
+                                  link:
+                                    description: If specified, the Azure subscription will be provided by the located AzureSubscription resource.
+                                    properties:
+                                      namespace:
+                                        description: Optional Kubernetes namespace of the AzureSubscription resource.
+                                        type: string
+                                      name:
+                                        description: Name of the Kubernetes AzureSubscription resource.
+                                        type: string
+                                    required:
+                                    - name
+                                    type: object
+                                type: object
+                              name:
+                                description: Name of the Azure resource group within the specified subscription.
+                                type: string
+                            required:
+                            - subscription
+                            - name
+                            type: object
+                          link:
+                            description: If specified, the Azure resource group will be provided by the located AzureResourceGroup resource.
+                            properties:
+                              namespace:
+                                description: Optional Kubernetes namespace of the AzureResourceGroup resource.
+                                type: string
+                              name:
+                                description: Name of the AzureResourceGroup resource.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        type: object
+                      parent:
+                        description: Parent resource.
+                        properties: {}
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      resourceProvider:
+                        description: Name of the resource provider of the resource.
+                        type: string
+                      resourceType:
+                        description: Type of the resource.
+                        type: string
+                      name:
+                        description: Name of the Azure resource.
+                        type: string
+                    required:
+                    - resourceProvider
+                    - resourceType
+                    - name
+                    type: object
+                  link:
+                    description: If specified, the Azure resource will be provided by the located AzureResource resource.
+                    properties:
+                      namespace:
+                        description: Optional Kubernetes namespace of the AzureResource resource.
+                        type: string
+                      name:
+                        description: Name of the AzureResource resource.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              operation:
+                description: Name of the operation.
+                type: string
+              targetSecret:
+                description: Specification of the target secret.
+                properties:
+                  namespace:
+                    description: Namespace of the secret.
+                    type: string
+                  name:
+                    description: Name of the secret.
+                    type: string
+                required:
+                - name
+                type: object
+              targetConfigMap:
+                description: Specification of the target configmap.
+                properties:
+                  namespace:
+                    description: Namespace of the config map.
+                    type: string
+                  name:
+                    description: Name of the config map.
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - resource
+            - operation
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

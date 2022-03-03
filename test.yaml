@@ -1,0 +1,24 @@
+apiVersion: arm.azure.com/v1
+kind: AzureResource
+metadata:
+  name: test
+spec:
+  resourceGroup:
+    query:
+      subscription:
+        query:
+          id: 8ad34fe2-7d43-49c9-a13c-f52c86f390eb
+      name: test
+  resourceProvider: Microsoft.Storage
+  resourceType: storageAccounts
+  name: teststorjvi9972
+  apiVersion: 2022-02-22
+  template:
+    location: eastus
+    tags:
+      test: valuess
+    kind: BlobStorage
+    sku:
+      name: Standard_LRS
+    properties:
+      accessTier: Hot

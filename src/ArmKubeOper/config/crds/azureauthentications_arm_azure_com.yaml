@@ -1,0 +1,41 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: azureauthentications.arm.azure.com
+spec:
+  group: arm.azure.com
+  names:
+    kind: AzureAuthentication
+    listKind: AzureAuthenticationList
+    plural: azureauthentications
+    singular: azureauthentication
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            description: Specification of the kubernetes object.
+            properties:
+              podIdentity:
+                description: 'Specifies that the authentication information will be delievered by Azure AD '
+                type: string
+              secretRef:
+                description: >-
+                  Specifies that the authentication information will be stored in a secret. A secret by the given name must be
+
+                  within the same namespace as the as the AzureAuthentication.
+                properties:
+                  name:
+                    type: string
+                  keyName:
+                    type: string
+                required:
+                - name
+                - keyName
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true

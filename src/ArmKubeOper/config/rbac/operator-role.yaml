@@ -1,0 +1,90 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-role
+rules:
+- apiGroups:
+  - arm.azure.com
+  - coordination.k8s.io
+  resources:
+  - azuresubscriptions
+  - azuresubscriptionresources
+  - azureresources
+  - azureresourcegroups
+  - azureresourcesecrets
+  - azuretenantresources
+  - leases
+  verbs:
+  - '*'
+- apiGroups:
+  - ''
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - update
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azuresubscriptions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azuresubscriptionresources/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azureresources/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azureresourcegroups/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azureresourcesecrets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arm.azure.com
+  resources:
+  - azuretenantresources/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps
+  resources:
+  - deployments/status
+  verbs:
+  - get
+  - patch
+  - update

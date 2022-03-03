@@ -1,0 +1,8 @@
+version: '3.4'
+
+services:
+  arm-operator:
+    image: arm-operator:latest
+    build:
+      context: .
+      dockerfile: src/ArmKubeOper/Dockerfile

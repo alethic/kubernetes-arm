@@ -1,0 +1,15 @@
+namespace: arm-system
+namePrefix: arm-
+commonLabels:
+  operator: arm
+resources:
+- ./namespace.yaml
+- ../crds
+- ../rbac
+- ../operator
+images:
+- name: operator
+  newName: arm-operator
+  newTag: latest
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization

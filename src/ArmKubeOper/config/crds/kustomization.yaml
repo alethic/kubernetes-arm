@@ -1,0 +1,13 @@
+commonLabels:
+  operator-element: crd
+resources:
+- azuretenantresources_arm_azure_com.yaml
+- azureresources_arm_azure_com.yaml
+- azureresourcegroups_arm_azure_com.yaml
+- azureresourcesecrets_arm_azure_com.yaml
+- azureresourceconfigmaps_arm_azure_com.yaml
+- azuresubscriptionresources_arm_azure_com.yaml
+- azuresubscriptions_arm_azure_com.yaml
+- azureauthentications_arm_azure_com.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
